@@ -44,7 +44,7 @@
     "prepare": "husky",
     "prepublishOnly": "bun run build",
     "bump": "bumpp --changelog",
-    "publish": "bun publish"
+    "release": "bun publish"
   },
   "devDependencies": {
     "@commitlint/cli": "^20.3.1",
