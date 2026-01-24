@@ -19,6 +19,16 @@ A comprehensive metadata extraction library that pulls OpenGraph, Twitter Cards,
 - 🌐 **Charset Detection** — Auto-detect and convert non-UTF-8 pages
 - 📊 **Bulk Processing** — Process hundreds of URLs with per-domain rate limiting
 
+## 🤖 AI Agent Skill
+
+This package is available as an [Agent Skill](https://skills.sh/) for AI coding assistants like Claude Code, Cursor, Copilot, and more.
+
+```bash
+npx skills add dobroslavradosavljevic/ogie
+```
+
+Once installed, your AI agent will know how to extract OpenGraph, Twitter Cards, and metadata from URLs or HTML.
+
 ## 📥 Installation
 
 ```bash
