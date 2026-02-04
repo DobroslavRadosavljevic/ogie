@@ -1,0 +1,16 @@
+<!doctype html>
+<html>
+  <head>
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "Article",
+      "name": "<script>alert('xss')</script>",
+      "description": "Normal description with <img onerror=alert(1)> attempt",
+      "author": {"@type": "Person", "name": "'; DROP TABLE users;--"}
+    }
+    </script>
+    <meta property="og:title" content="JSON-LD XSS Test" />
+  </head>
+  <body></body>
+</html>

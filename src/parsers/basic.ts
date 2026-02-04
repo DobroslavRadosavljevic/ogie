@@ -2,6 +2,7 @@ import type { CheerioAPI } from "cheerio";
 
 import type { BasicMetaData } from "../types";
 
+import { normalizeCharset } from "../utils/encoding";
 import { resolveUrl } from "../utils/url";
 import { getPrimaryFavicon, parseFavicons } from "./favicon";
 import { getMetaContent } from "./utils";
@@ -9,14 +10,14 @@ import { getMetaContent } from "./utils";
 const getCharset = ($: CheerioAPI): string | undefined => {
   const charset = $("meta[charset]").attr("charset")?.trim();
   if (charset) {
-    return charset;
+    return normalizeCharset(charset);
   }
 
-  const contentType = $('meta[http-equiv="Content-Type"]').attr("content");
+  const contentType = $('meta[http-equiv="content-type"]').attr("content");
   if (contentType) {
     const match = /charset=([^\s;]+)/i.exec(contentType);
     if (match?.[1]) {
-      return match[1].trim();
+      return normalizeCharset(match[1].trim());
     }
   }
   return undefined;

@@ -9,7 +9,8 @@ import type {
 } from "./types";
 
 import { generateCacheKey, type MetadataCache } from "./cache";
-import { OgieError, ParseError } from "./errors";
+import { OgieError } from "./errors/ogie-error";
+import { ParseError } from "./errors/parse-error";
 import { fetchUrl } from "./fetch";
 import { parseAppLinks } from "./parsers/app-links";
 import { parseArticle } from "./parsers/article";
@@ -29,6 +30,8 @@ import { parseProfile } from "./parsers/profile";
 import { parseTwitterCard } from "./parsers/twitter";
 import { parseVideo } from "./parsers/video";
 import { isPrivateUrl, isValidUrl } from "./utils/url";
+
+const VERSION = "1.0.3";
 
 const HTML_INPUT_URL = "html-input";
 
@@ -59,8 +62,27 @@ interface ParsedHtml {
   video: ReturnType<typeof parseVideo>;
 }
 
+const normalizeMetaAttributes = ($: CheerioAPI): void => {
+  $("meta").each((_, el) => {
+    const $el = $(el);
+    const property = $el.attr("property");
+    if (property) {
+      $el.attr("property", property.toLowerCase());
+    }
+    const name = $el.attr("name");
+    if (name) {
+      $el.attr("name", name.toLowerCase());
+    }
+    const httpEquiv = $el.attr("http-equiv");
+    if (httpEquiv) {
+      $el.attr("http-equiv", httpEquiv.toLowerCase());
+    }
+  });
+};
+
 const parseHtml = (html: string, baseUrl?: string): ParsedHtml => {
   const $ = load(html);
+  normalizeMetaAttributes($);
   return {
     $,
     appLinks: parseAppLinks($),
@@ -83,9 +105,9 @@ const applyFallbacks = (
   og: Metadata["og"],
   twitter: Metadata["twitter"],
   basic: Metadata["basic"],
-  skip: boolean
+  skipFallbacks: boolean
 ) => {
-  if (skip) {
+  if (skipFallbacks) {
     return og;
   }
   return {
@@ -105,7 +127,7 @@ const wrapError = (error: unknown, url: string): OgieError => {
 };
 
 const hasData = (obj: object): boolean =>
-  Object.values(obj).some((v) => v !== undefined);
+  Object.values(obj).some((v) => v !== undefined && v !== null);
 
 interface BuildMetadataFromParsedOptions {
   parsed: ParsedHtml;
@@ -211,6 +233,12 @@ export const extractFromHtml = (
   html: string,
   options?: ExtractOptions
 ): ExtractResult => {
+  if (!html || typeof html !== "string") {
+    return createFailure(
+      new ParseError("HTML input must be a non-empty string", HTML_INPUT_URL)
+    );
+  }
+
   const baseUrl = options?.baseUrl ?? "";
   const requestUrl = baseUrl || HTML_INPUT_URL;
 
@@ -224,15 +252,11 @@ export const extractFromHtml = (
       })
     );
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Failed to parse HTML";
-    const cause = error instanceof Error ? error : undefined;
-    return createFailure(new ParseError(message, requestUrl, cause));
+    return createFailure(wrapError(error, requestUrl));
   }
 };
 
-const DEFAULT_OEMBED_USER_AGENT =
-  "ogie/1.0 (+https://github.com/dobroslavradosavljevic/ogie)";
+const DEFAULT_OEMBED_USER_AGENT = `ogie/${VERSION} (+https://github.com/dobroslavradosavljevic/ogie)`;
 
 /**
  * Validate oEmbed endpoint URL for SSRF protection
@@ -273,7 +297,15 @@ const parseOEmbedFromResponse = async (
     );
   }
 
-  const json: unknown = await response.json();
+  let json: unknown;
+  try {
+    json = await response.json();
+  } catch {
+    return createOEmbedErrorResult(
+      "Failed to parse oEmbed JSON: malformed response body"
+    );
+  }
+
   const data = parseOEmbedResponse(json);
 
   return data
@@ -297,12 +329,12 @@ const executeOEmbedFetch = async (
       },
       signal: controller.signal,
     });
-    clearTimeout(timeoutId);
-    return parseOEmbedFromResponse(response);
+    return await parseOEmbedFromResponse(response);
   } catch (error) {
-    clearTimeout(timeoutId);
     const message = error instanceof Error ? error.message : "Unknown error";
     return createOEmbedErrorResult(`oEmbed fetch error: ${message}`);
+  } finally {
+    clearTimeout(timeoutId);
   }
 };
 
@@ -397,8 +429,12 @@ const getCachedResult = (
     return undefined;
   }
 
-  const cacheKey = generateCacheKey(url, options);
-  return cache.get(cacheKey);
+  try {
+    const cacheKey = generateCacheKey(url, options);
+    return cache.get(cacheKey);
+  } catch {
+    return undefined;
+  }
 };
 
 /**
@@ -414,8 +450,12 @@ const cacheResult = (
     return;
   }
 
-  const cacheKey = generateCacheKey(url, options);
-  cache.set(cacheKey, metadata);
+  try {
+    const cacheKey = generateCacheKey(url, options);
+    cache.set(cacheKey, metadata);
+  } catch {
+    // Ignore cache write errors - extraction should not fail due to caching
+  }
 };
 
 const performExtraction = async (

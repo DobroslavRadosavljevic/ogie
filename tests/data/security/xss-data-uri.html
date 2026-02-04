@@ -1,0 +1,15 @@
+<!doctype html>
+<html>
+  <head>
+    <meta
+      property="og:image"
+      content="data:text/html,<script>alert('xss')</script>"
+    />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg'><script>alert(1)</script></svg>"
+    />
+    <meta property="og:title" content="Data URI Test" />
+  </head>
+  <body></body>
+</html>

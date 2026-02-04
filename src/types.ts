@@ -3,7 +3,7 @@
  */
 
 import type { MetadataCache } from "./cache";
-import type { OgieError } from "./errors";
+import type { OgieError } from "./errors/ogie-error";
 import type { AppLinksData } from "./parsers/app-links";
 import type { ArticleData } from "./parsers/article";
 import type { BookData } from "./parsers/book";
@@ -357,9 +357,6 @@ export interface TwitterCardData {
 // =============================================================================
 
 /**
- * Basic HTML meta tags and document information
- */
-/**
  * Favicon metadata with size and type information
  */
 export interface FaviconData {
@@ -379,6 +376,9 @@ export interface FaviconData {
   color?: string;
 }
 
+/**
+ * Basic HTML meta tags and document information
+ */
 export interface BasicMetaData {
   /** Document title from <title> tag */
   title?: string;

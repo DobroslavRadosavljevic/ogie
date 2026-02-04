@@ -79,12 +79,7 @@ export type {
 } from "./parsers/jsonld";
 
 // Error classes, types, and type guards
-export type { ErrorCode } from "./errors";
-export {
-  OgieError,
-  FetchError,
-  ParseError,
-  isOgieError,
-  isFetchError,
-  isParseError,
-} from "./errors";
+export type { ErrorCode } from "./errors/types";
+export { OgieError, isOgieError } from "./errors/ogie-error";
+export { FetchError, isFetchError } from "./errors/fetch-error";
+export { ParseError, isParseError } from "./errors/parse-error";

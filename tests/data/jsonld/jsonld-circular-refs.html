@@ -1,0 +1,25 @@
+<!doctype html>
+<html>
+  <head>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "Organization",
+            "@id": "https://example.com/#org",
+            "name": "Circular Org",
+            "member": { "@id": "https://example.com/#person" }
+          },
+          {
+            "@type": "Person",
+            "@id": "https://example.com/#person",
+            "name": "Circular Person",
+            "worksFor": { "@id": "https://example.com/#org" }
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body></body>
+</html>

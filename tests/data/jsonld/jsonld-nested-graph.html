@@ -1,0 +1,36 @@
+<!doctype html>
+<html>
+  <head>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "WebPage",
+            "@id": "https://example.com/page#webpage",
+            "name": "Test Page",
+            "isPartOf": { "@id": "https://example.com/#website" }
+          },
+          {
+            "@type": "WebSite",
+            "@id": "https://example.com/#website",
+            "name": "Example Website",
+            "url": "https://example.com"
+          },
+          {
+            "@type": "Article",
+            "name": "Graph Article",
+            "author": { "@id": "https://example.com/#person" },
+            "isPartOf": { "@id": "https://example.com/page#webpage" }
+          },
+          {
+            "@type": "Person",
+            "@id": "https://example.com/#person",
+            "name": "Jane Smith"
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body></body>
+</html>

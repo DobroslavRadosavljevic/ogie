@@ -25,13 +25,25 @@ const META_SCAN_LIMIT = 2048;
 /**
  * Normalize charset name (e.g., "utf-8" -> "utf8")
  */
-const normalizeCharset = (charset: string): string => {
+const CHARSET_ALIASES: Record<string, string> = {
+  ascii: "utf8",
+  cp1252: "windows-1252",
+  "iso8859-1": "iso-8859-1",
+  iso88591: "iso-8859-1",
+  "iso_8859-1": "iso-8859-1",
+  latin1: "iso-8859-1",
+  "us-ascii": "utf8",
+  "win-1252": "windows-1252",
+  "x-cp1252": "windows-1252",
+};
+
+export const normalizeCharset = (charset: string): string => {
   const normalized = charset.toLowerCase().trim();
-  // eslint-disable-next-line unicorn/text-encoding-identifier-case
-  if (normalized === "utf-8") {
+  // Normalize utf-8 variants to utf8 (iconv-lite preferred form)
+  if (normalized.replaceAll("-", "") === "utf8") {
     return "utf8";
   }
-  return normalized;
+  return CHARSET_ALIASES[normalized] ?? normalized;
 };
 
 /**
@@ -103,7 +115,7 @@ const detectHtmlMetaCharset = (html: string): MetaCharsetResult | undefined => {
   // Check http-equiv patterns first (they also contain "charset=" but inside content attribute)
   // Pattern 1: http-equiv comes before content
   const httpEquivMatch =
-    /<meta[^>]+http-equiv=["']?Content-Type["']?[^>]+content=["']?[^"']*charset=([^"'\s;>]+)/i.exec(
+    /<meta[^>]{0,500}?http-equiv=["']?Content-Type["']?[^>]{0,500}?content=["']?[^"']*charset=([^"'\s;>]+)/i.exec(
       html
     );
   if (httpEquivMatch?.[1]) {
@@ -115,7 +127,7 @@ const detectHtmlMetaCharset = (html: string): MetaCharsetResult | undefined => {
 
   // Pattern 2: content comes before http-equiv (reversed order)
   const reversedHttpEquivMatch =
-    /<meta[^>]+content=["']?[^"']*charset=([^"'\s;>]+)[^>]+http-equiv=["']?Content-Type["']?/i.exec(
+    /<meta[^>]{0,500}?content=["']?[^"']*charset=([^"'\s;>]+)[^>]{0,500}?http-equiv=["']?Content-Type["']?/i.exec(
       html
     );
   if (reversedHttpEquivMatch?.[1]) {
@@ -221,6 +233,11 @@ export const isCharsetSupported = (charset: string): boolean =>
   iconv.encodingExists(charset);
 
 /**
+ * Strip UTF-8 BOM (U+FEFF) from the beginning of a decoded string
+ */
+const stripBom = (str: string) => str.replace(/^\uFEFF/, "");
+
+/**
  * Decode buffer to string with specified charset using iconv-lite
  * Falls back to UTF-8 if charset is not supported or decode fails
  */
@@ -229,7 +246,7 @@ export const decodeHtml = (buffer: ArrayBuffer, charset: string): string => {
 
   try {
     if (iconv.encodingExists(charset)) {
-      return iconv.decode(buf, charset);
+      return stripBom(iconv.decode(buf, charset));
     }
   } catch {
     // Fall through to UTF-8 fallback
@@ -237,7 +254,7 @@ export const decodeHtml = (buffer: ArrayBuffer, charset: string): string => {
 
   // Fall back to UTF-8 if charset not supported or decode failed
   try {
-    return iconv.decode(buf, "utf8");
+    return stripBom(iconv.decode(buf, "utf8"));
   } catch {
     // If even UTF-8 decode fails, return empty string
     return "";

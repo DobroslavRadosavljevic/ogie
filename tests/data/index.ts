@@ -22,3 +22,18 @@ export const fixtures = {
   twitterApp: loadFixture("twitter-app.html"),
   twitterPlayer: loadFixture("twitter-player.html"),
 } as const;
+
+export { edgeCaseFixtures } from "./edge-cases";
+export { opengraphFixtures } from "./opengraph";
+export { twitterFixtures } from "./twitter";
+export { jsonldFixtures } from "./jsonld";
+export { realWorldFixtures } from "./real-world";
+export { structuredTypeFixtures } from "./structured-types";
+export { feedsOembedFixtures } from "./feeds-oembed";
+export { appLinksFixtures } from "./app-links";
+export { dublinCoreFixtures } from "./dublin-core";
+export { securityFixtures } from "./security";
+export { urlHandlingFixtures } from "./url-handling";
+export { encodingFixtures } from "./encoding";
+export { fallbackFixtures } from "./fallbacks";
+export { faviconFixtures } from "./favicon";

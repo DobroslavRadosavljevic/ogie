@@ -22,6 +22,7 @@ export const isValidUrl = (url: string): boolean => {
  * - 198.51.100.0/24 (TEST-NET-2)
  * - 203.0.113.0/24 (TEST-NET-3)
  * - 198.18.0.0/15 (benchmarking)
+ * - 224.0.0.0/4 (multicast)
  * - 240.0.0.0/4 (reserved)
  * - 255.255.255.255 (broadcast)
  */
@@ -38,6 +39,8 @@ const PRIVATE_IPV4_PATTERNS = [
   /^198\.51\.100\./,
   /^203\.0\.113\./,
   /^198\.1[89]\./,
+  /^22[4-9]\./,
+  /^23\d\./,
   /^240\./,
   /^255\.255\.255\.255$/,
 ];
@@ -50,13 +53,16 @@ const PRIVATE_HOSTNAMES = new Set([
   "ip6-loopback",
 ]);
 
-/** Check if hostname is an IPv4 address */
+/** Check if hostname is an IPv4 address (rejects octal notation with leading zeros) */
 const isIPv4 = (hostname: string): boolean => {
   const parts = hostname.split(".");
   if (parts.length !== 4) {
     return false;
   }
   return parts.every((part) => {
+    if (/^0\d/.test(part)) {
+      return false;
+    }
     const num = Number(part);
     return Number.isInteger(num) && num >= 0 && num <= 255;
   });
@@ -78,7 +84,7 @@ const isIPv6LocalRange = (addr: string): boolean =>
 
 /** Check if IPv4-mapped IPv6 address points to private IPv4 */
 const isPrivateIPv4Mapped = (addr: string): boolean => {
-  const match = addr.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+  const match = addr.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i);
   return match !== null && isPrivateIPv4(match[1]);
 };
 
@@ -94,9 +100,14 @@ const isPrivateIPv6 = (hostname: string): boolean => {
   );
 };
 
-/** Check if hostname uses internal TLDs (.local, .internal) */
+/** Check if hostname uses internal/reserved TLDs (.local, .internal, RFC 2606/6761) */
 const isInternalTld = (hostname: string): boolean =>
-  hostname.endsWith(".local") || hostname.endsWith(".internal");
+  hostname.endsWith(".local") ||
+  hostname.endsWith(".internal") ||
+  hostname.endsWith(".localhost") ||
+  hostname.endsWith(".test") ||
+  hostname.endsWith(".example") ||
+  hostname.endsWith(".invalid");
 
 /** Check if hostname is private based on its type (hostname, IPv4, or IPv6) */
 const isPrivateHostname = (hostname: string): boolean => {
