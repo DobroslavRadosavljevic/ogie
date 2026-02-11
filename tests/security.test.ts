@@ -1,7 +1,11 @@
-import { describe, expect, it } from "bun:test";
+/* eslint-disable jest/no-conditional-in-test, max-statements, no-nested-ternary, require-await, unicorn/consistent-function-scoping */
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 
 import {
+  extract,
   extractFromHtml,
+  isOgieError,
+  type ExtractFailure,
   type ExtractSuccess,
   type JsonLdPerson,
 } from "../src";
@@ -202,5 +206,229 @@ describe("Security - SSRF Private URLs (parse level)", () => {
     expect(result.data.oEmbedDiscovery?.jsonUrl).toBe(
       "http://192.168.1.1/oembed"
     );
+  });
+});
+
+describe("Security - SSRF protection on network path", () => {
+  it("blocks private URLs in extract() by default", async () => {
+    const result = (await extract(
+      "http://127.0.0.1/internal"
+    )) as ExtractFailure;
+
+    expect(result.success).toBe(false);
+    expect(result.error.code).toBe("INVALID_URL");
+    expect(isOgieError(result.error)).toBe(true);
+  });
+
+  it("allows private URLs when allowPrivateUrls is enabled", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(
+        `
+          <!doctype html>
+          <html>
+            <head>
+              <meta property="og:title" content="Private Page">
+            </head>
+            <body></body>
+          </html>
+        `,
+        {
+          headers: {
+            "content-type": "text/html; charset=utf-8",
+          },
+        }
+      )) as unknown as typeof globalThis.fetch;
+
+    try {
+      const result = (await extract("http://127.0.0.1/internal", {
+        allowPrivateUrls: true,
+      })) as ExtractSuccess;
+
+      expect(result.success).toBe(true);
+      expect(result.data.og.title).toBe("Private Page");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+describe("Security - oEmbed redirect SSRF hardening", () => {
+  let originalFetch: typeof globalThis.fetch;
+  let requestedUrls: string[];
+
+  const htmlWithOEmbed = (oEmbedEndpoint: string): string => `
+    <!doctype html>
+    <html>
+      <head>
+        <meta property="og:title" content="Public Article">
+        <link
+          rel="alternate"
+          type="application/json+oembed"
+          href="${oEmbedEndpoint}"
+        >
+      </head>
+      <body></body>
+    </html>
+  `;
+
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+    requestedUrls = [];
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it("blocks oEmbed redirect to private IP by default", async () => {
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url;
+      requestedUrls.push(url);
+
+      if (url === "https://public.example.com/article") {
+        return new Response(
+          htmlWithOEmbed("https://public.example.com/oembed?format=json"),
+          {
+            headers: { "content-type": "text/html; charset=utf-8" },
+          }
+        );
+      }
+      if (url === "https://public.example.com/oembed?format=json") {
+        return new Response(null, {
+          headers: { location: "https://127.0.0.1:8080/oembed" },
+          status: 302,
+        });
+      }
+      if (url === "https://127.0.0.1:8080/oembed") {
+        return Response.json({
+          height: 360,
+          html: "<iframe></iframe>",
+          type: "video",
+          version: "1.0",
+          width: 640,
+        });
+      }
+      return new Response("Not found", { status: 404 });
+    }) as unknown as typeof globalThis.fetch;
+
+    const result = (await extract("https://public.example.com/article", {
+      fetchOEmbed: true,
+    })) as ExtractSuccess;
+
+    expect(result.success).toBe(true);
+    expect(result.data.oEmbed).toBeUndefined();
+    expect(requestedUrls).toEqual([
+      "https://public.example.com/article",
+      "https://public.example.com/oembed?format=json",
+    ]);
+  });
+
+  it("blocks multi-hop oEmbed redirect chains when an intermediate hop is private", async () => {
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url;
+      requestedUrls.push(url);
+
+      if (url === "https://public.example.com/article") {
+        return new Response(
+          htmlWithOEmbed("https://public.example.com/oembed?format=json"),
+          {
+            headers: { "content-type": "text/html; charset=utf-8" },
+          }
+        );
+      }
+      if (url === "https://public.example.com/oembed?format=json") {
+        return new Response(null, {
+          headers: { location: "https://public.example.com/oembed-hop-2" },
+          status: 302,
+        });
+      }
+      if (url === "https://public.example.com/oembed-hop-2") {
+        return new Response(null, {
+          headers: { location: "https://10.0.0.5/oembed-private" },
+          status: 302,
+        });
+      }
+      if (url === "https://10.0.0.5/oembed-private") {
+        return Response.json({
+          title: "Should never be fetched",
+          type: "link",
+          version: "1.0",
+        });
+      }
+      return new Response("Not found", { status: 404 });
+    }) as unknown as typeof globalThis.fetch;
+
+    const result = (await extract("https://public.example.com/article", {
+      fetchOEmbed: true,
+    })) as ExtractSuccess;
+
+    expect(result.success).toBe(true);
+    expect(result.data.oEmbed).toBeUndefined();
+    expect(requestedUrls).toEqual([
+      "https://public.example.com/article",
+      "https://public.example.com/oembed?format=json",
+      "https://public.example.com/oembed-hop-2",
+    ]);
+  });
+
+  it("allows private oEmbed redirects when allowPrivateUrls is true", async () => {
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url;
+      requestedUrls.push(url);
+
+      if (url === "https://public.example.com/article") {
+        return new Response(
+          htmlWithOEmbed("https://public.example.com/oembed?format=json"),
+          {
+            headers: { "content-type": "text/html; charset=utf-8" },
+          }
+        );
+      }
+      if (url === "https://public.example.com/oembed?format=json") {
+        return new Response(null, {
+          headers: { location: "https://127.0.0.1:8080/oembed" },
+          status: 302,
+        });
+      }
+      if (url === "https://127.0.0.1:8080/oembed") {
+        return Response.json({
+          provider_name: "Local Provider",
+          title: "Private oEmbed",
+          type: "link",
+          version: "1.0",
+        });
+      }
+      return new Response("Not found", { status: 404 });
+    }) as unknown as typeof globalThis.fetch;
+
+    const result = (await extract("https://public.example.com/article", {
+      allowPrivateUrls: true,
+      fetchOEmbed: true,
+    })) as ExtractSuccess;
+
+    expect(result.success).toBe(true);
+    expect(result.data.oEmbed?.type).toBe("link");
+    expect(result.data.oEmbed?.title).toBe("Private oEmbed");
+    expect(requestedUrls).toEqual([
+      "https://public.example.com/article",
+      "https://public.example.com/oembed?format=json",
+      "https://127.0.0.1:8080/oembed",
+    ]);
   });
 });

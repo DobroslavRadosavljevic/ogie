@@ -2,6 +2,7 @@ import Bottleneck from "bottleneck";
 
 import type { ExtractOptions, ExtractResult } from "../types";
 
+import { OgieError } from "../errors/ogie-error";
 import { extract } from "../extract";
 import { getBaseUrl } from "../utils/url";
 
@@ -215,23 +216,28 @@ const updateProgressOnSuccess = (
   ctx.options.onProgress?.({ ...ctx.progress });
 };
 
-const createErrorResult = (url: string, error: unknown): BulkResultItem => {
-  const errorMessage = error instanceof Error ? error.message : "Unknown error";
-  return {
-    durationMs: 0,
-    result: {
-      error: {
-        cause: error instanceof Error ? error : undefined,
-        code: "FETCH_ERROR",
-        message: errorMessage,
-        name: "OgieError",
-        url,
-      },
-      success: false,
-    } as ExtractResult,
-    url,
-  };
+const normalizeBulkError = (url: string, error: unknown): OgieError => {
+  if (error instanceof OgieError) {
+    return error;
+  }
+  if (error instanceof Error) {
+    return new OgieError(error.message, "FETCH_ERROR", url, error);
+  }
+  return new OgieError(
+    "Unknown error during bulk extraction",
+    "FETCH_ERROR",
+    url
+  );
 };
+
+const createErrorResult = (url: string, error: unknown): BulkResultItem => ({
+  durationMs: 0,
+  result: {
+    error: normalizeBulkError(url, error),
+    success: false,
+  },
+  url,
+});
 
 const handleUrlError = (
   url: string,

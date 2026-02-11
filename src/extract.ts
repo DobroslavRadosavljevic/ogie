@@ -11,7 +11,7 @@ import type {
 import { generateCacheKey, type MetadataCache } from "./cache";
 import { OgieError } from "./errors/ogie-error";
 import { ParseError } from "./errors/parse-error";
-import { fetchUrl } from "./fetch";
+import { DEFAULT_MAX_REDIRECTS, fetchUrl } from "./fetch";
 import { parseAppLinks } from "./parsers/app-links";
 import { parseArticle } from "./parsers/article";
 import { parseBasicMeta } from "./parsers/basic";
@@ -31,7 +31,7 @@ import { parseTwitterCard } from "./parsers/twitter";
 import { parseVideo } from "./parsers/video";
 import { isPrivateUrl, isValidUrl } from "./utils/url";
 
-const VERSION = "1.0.3";
+const VERSION = "2.0.0";
 
 const HTML_INPUT_URL = "html-input";
 
@@ -257,6 +257,10 @@ export const extractFromHtml = (
 };
 
 const DEFAULT_OEMBED_USER_AGENT = `ogie/${VERSION} (+https://github.com/dobroslavradosavljevic/ogie)`;
+const DEFAULT_OEMBED_TIMEOUT = 10_000;
+
+const INVALID_OEMBED_ENDPOINT_MESSAGE =
+  "Invalid oEmbed endpoint: URL must be HTTP/HTTPS and not point to private network";
 
 /**
  * Validate oEmbed endpoint URL for SSRF protection
@@ -288,6 +292,47 @@ const createOEmbedErrorResult = (message: string): OEmbedFetchResult => ({
   error: message,
 });
 
+const isOEmbedErrorResult = (
+  result: Response | OEmbedFetchResult
+): result is OEmbedFetchResult =>
+  "error" in result && typeof result.error === "string";
+
+const validateOEmbedEndpoint = (
+  endpoint: string,
+  allowPrivateUrls: boolean
+): OEmbedFetchResult | undefined =>
+  isValidOEmbedEndpoint(endpoint, allowPrivateUrls)
+    ? undefined
+    : createOEmbedErrorResult(INVALID_OEMBED_ENDPOINT_MESSAGE);
+
+const isAbortError = (error: unknown): boolean =>
+  error instanceof Error && error.name === "AbortError";
+
+const isRedirectStatus = (status: number): boolean =>
+  status >= 300 && status < 400;
+
+const resolveRedirectUrl = (
+  currentUrl: string,
+  response: Response
+): string | undefined => {
+  const location = response.headers.get("location");
+  if (!location || location.trim() === "") {
+    return undefined;
+  }
+  try {
+    return new URL(location, currentUrl).href;
+  } catch {
+    return undefined;
+  }
+};
+
+const isProtocolDowngrade = (
+  currentUrl: string,
+  redirectUrl: string
+): boolean =>
+  new URL(currentUrl).protocol === "https:" &&
+  new URL(redirectUrl).protocol === "http:";
+
 const parseOEmbedFromResponse = async (
   response: Response
 ): Promise<OEmbedFetchResult> => {
@@ -313,29 +358,156 @@ const parseOEmbedFromResponse = async (
     : createOEmbedErrorResult("Failed to parse oEmbed response");
 };
 
+interface OEmbedFetchContext {
+  allowPrivateUrls: boolean;
+  maxRedirects: number;
+  timeout: number;
+  userAgent: string;
+}
+
+const createOEmbedFetchContext = (
+  options?: ExtractOptions
+): OEmbedFetchContext => ({
+  allowPrivateUrls: options?.allowPrivateUrls ?? false,
+  maxRedirects: options?.maxRedirects ?? DEFAULT_MAX_REDIRECTS,
+  timeout: options?.timeout ?? DEFAULT_OEMBED_TIMEOUT,
+  userAgent: options?.userAgent ?? DEFAULT_OEMBED_USER_AGENT,
+});
+
+const createOEmbedFetchError = (
+  error: unknown,
+  timeout: number
+): OEmbedFetchResult => {
+  if (isAbortError(error)) {
+    return createOEmbedErrorResult(`oEmbed fetch timeout after ${timeout}ms`);
+  }
+  const message = error instanceof Error ? error.message : "Unknown error";
+  return createOEmbedErrorResult(`oEmbed fetch error: ${message}`);
+};
+
+const fetchOEmbedResponse = async (
+  url: string,
+  ctx: OEmbedFetchContext
+): Promise<Response | OEmbedFetchResult> => {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), ctx.timeout);
+  try {
+    return await fetch(url, {
+      headers: {
+        Accept: "application/json",
+        "User-Agent": ctx.userAgent,
+      },
+      redirect: "manual",
+      signal: controller.signal,
+    });
+  } catch (error) {
+    return createOEmbedFetchError(error, ctx.timeout);
+  } finally {
+    clearTimeout(timeoutId);
+  }
+};
+
+const getValidatedRedirectUrl = (
+  currentUrl: string,
+  response: Response,
+  allowPrivateUrls: boolean
+): { redirectUrl?: string; error?: OEmbedFetchResult } => {
+  const redirectUrl = resolveRedirectUrl(currentUrl, response);
+  if (!redirectUrl) {
+    return {
+      error: createOEmbedErrorResult(
+        "oEmbed fetch error: redirect response without valid Location header"
+      ),
+    };
+  }
+  if (isProtocolDowngrade(currentUrl, redirectUrl)) {
+    return {
+      error: createOEmbedErrorResult(
+        "oEmbed fetch error: HTTPS to HTTP protocol downgrade is not allowed"
+      ),
+    };
+  }
+  const redirectValidationError = validateOEmbedEndpoint(
+    redirectUrl,
+    allowPrivateUrls
+  );
+  if (redirectValidationError) {
+    return { error: redirectValidationError };
+  }
+  return { redirectUrl };
+};
+
+// eslint-disable-next-line max-statements -- Security checks are intentionally explicit for redirect handling
 const executeOEmbedFetch = async (
   endpoint: string,
   options?: ExtractOptions
 ): Promise<OEmbedFetchResult> => {
-  const controller = new AbortController();
-  const timeout = options?.timeout ?? 10_000;
-  const timeoutId = setTimeout(() => controller.abort(), timeout);
+  const ctx = createOEmbedFetchContext(options);
+  const visitedUrls = new Set<string>();
+  let currentUrl = endpoint;
 
-  try {
-    const response = await fetch(endpoint, {
-      headers: {
-        Accept: "application/json",
-        "User-Agent": options?.userAgent ?? DEFAULT_OEMBED_USER_AGENT,
-      },
-      signal: controller.signal,
-    });
-    return await parseOEmbedFromResponse(response);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
-    return createOEmbedErrorResult(`oEmbed fetch error: ${message}`);
-  } finally {
-    clearTimeout(timeoutId);
+  for (
+    let redirectCount = 0;
+    redirectCount <= ctx.maxRedirects;
+    redirectCount += 1
+  ) {
+    const validationError = validateOEmbedEndpoint(
+      currentUrl,
+      ctx.allowPrivateUrls
+    );
+    if (validationError) {
+      return validationError;
+    }
+
+    if (visitedUrls.has(currentUrl)) {
+      return createOEmbedErrorResult(
+        "oEmbed fetch error: redirect loop detected"
+      );
+    }
+    visitedUrls.add(currentUrl);
+
+    const responseOrError = await fetchOEmbedResponse(currentUrl, ctx);
+    if (isOEmbedErrorResult(responseOrError)) {
+      return responseOrError;
+    }
+    const response = responseOrError;
+
+    if (!isRedirectStatus(response.status)) {
+      const finalValidationError = validateOEmbedEndpoint(
+        currentUrl,
+        ctx.allowPrivateUrls
+      );
+      if (finalValidationError) {
+        return finalValidationError;
+      }
+      return await parseOEmbedFromResponse(response);
+    }
+
+    if (redirectCount >= ctx.maxRedirects) {
+      return createOEmbedErrorResult(
+        `oEmbed fetch error: maximum redirects (${ctx.maxRedirects}) exceeded`
+      );
+    }
+
+    const { error, redirectUrl } = getValidatedRedirectUrl(
+      currentUrl,
+      response,
+      ctx.allowPrivateUrls
+    );
+    if (error) {
+      return error;
+    }
+    if (!redirectUrl) {
+      return createOEmbedErrorResult(
+        "oEmbed fetch error: redirect response without valid Location header"
+      );
+    }
+    currentUrl = redirectUrl;
   }
+
+  return createOEmbedErrorResult(
+    `oEmbed fetch error: maximum redirects (${ctx.maxRedirects}) exceeded`
+  );
 };
 
 /**
@@ -354,12 +526,9 @@ const fetchOEmbedData = (
   }
 
   const allowPrivateUrls = options?.allowPrivateUrls ?? false;
-  if (!isValidOEmbedEndpoint(endpoint, allowPrivateUrls)) {
-    return Promise.resolve(
-      createOEmbedErrorResult(
-        "Invalid oEmbed endpoint: URL must be HTTP/HTTPS and not point to private network"
-      )
-    );
+  const validationError = validateOEmbedEndpoint(endpoint, allowPrivateUrls);
+  if (validationError) {
+    return Promise.resolve(validationError);
   }
 
   return executeOEmbedFetch(endpoint, options);

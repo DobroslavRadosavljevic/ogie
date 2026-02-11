@@ -6,9 +6,9 @@ import { decodeHtml, detectCharset } from "./utils/encoding";
 import { isPrivateUrl, isValidUrl } from "./utils/url";
 
 const DEFAULT_TIMEOUT = 10_000;
-const DEFAULT_MAX_REDIRECTS = 5;
+export const DEFAULT_MAX_REDIRECTS = 5;
 const DEFAULT_USER_AGENT =
-  "ogie/1.0 (+https://github.com/dobroslavradosavljevic/ogie)";
+  "ogie/2.0 (+https://github.com/dobroslavradosavljevic/ogie)";
 const DEFAULT_ACCEPT = "text/html,application/xhtml+xml";
 /** 10MB max response size */
 const MAX_RESPONSE_SIZE = 10 * 1024 * 1024;
@@ -88,7 +88,8 @@ const handleFetchError = (
       `Request timeout after ${timeout}ms`,
       url,
       undefined,
-      error instanceof Error ? error : undefined
+      error instanceof Error ? error : undefined,
+      "TIMEOUT"
     );
   }
 
@@ -333,7 +334,13 @@ const checkRedirectLoop = (
   startUrl: string
 ): void => {
   if (visitedUrls.has(redirectUrl)) {
-    throw new FetchError("Redirect loop detected", startUrl);
+    throw new FetchError(
+      "Redirect loop detected",
+      startUrl,
+      undefined,
+      undefined,
+      "REDIRECT_LIMIT"
+    );
   }
 };
 
@@ -375,7 +382,10 @@ const followRedirects = async (
 
   throw new FetchError(
     `Maximum redirects (${ctx.maxRedirects}) exceeded`,
-    startUrl
+    startUrl,
+    undefined,
+    undefined,
+    "REDIRECT_LIMIT"
   );
 };
 

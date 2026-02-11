@@ -618,7 +618,7 @@ Discovered RSS, Atom, and JSON Feed links from the page.
 | ------------------ | ------------------------ | ---------- | ------------------------------- |
 | `timeout`          | `number`                 | `10000`    | Request timeout in ms           |
 | `maxRedirects`     | `number`                 | `5`        | Max redirects to follow         |
-| `userAgent`        | `string`                 | `ogie/1.0` | Custom User-Agent string        |
+| `userAgent`        | `string`                 | `ogie/2.0` | Custom User-Agent string        |
 | `headers`          | `Record<string, string>` | `{}`       | Custom HTTP headers             |
 | `baseUrl`          | `string`                 | —          | Base URL for resolving relative |
 | `onlyOpenGraph`    | `boolean`                | `false`    | Skip fallback parsing           |
@@ -808,6 +808,24 @@ import type {
 } from "ogie";
 ```
 
+## 🧩 Subpath Imports
+
+Tree-shakeable subpath imports are available in v2:
+
+```typescript
+import { extractBulk } from "ogie/bulk";
+import { createCache, generateCacheKey } from "ogie/cache";
+import { OgieError, FetchError, ParseError } from "ogie/errors";
+```
+
+For root-import users, no changes are required:
+
+```typescript
+import { extract, extractBulk, createCache } from "ogie";
+```
+
+See [`MIGRATION-v2.md`](./MIGRATION-v2.md) for all breaking changes and upgrade examples.
+
 ## 🔐 Security
 
 Ogie includes built-in security protections:
@@ -829,6 +847,37 @@ await extract("http://localhost:3000", {
 });
 ```
 
+## 🛠️ Development
+
+```bash
+# Install dependencies
+bun install
+
+# Lint + format + typecheck
+bun run lint
+bun run format
+bun run typecheck
+
+# Build dist outputs
+bun run build
+```
+
+### Release Flow
+
+```bash
+# Run all quality checks
+bun run lint
+bun run typecheck
+bun run test
+bun run test:coverage
+
+# Build package artifacts
+npm run build
+
+# Publish (tagged release workflow in CI uses npm publish)
+npm publish --provenance --access public
+```
+
 ## 🧪 Testing
 
 Comprehensive test suite with 28+ test files covering edge cases, real-world site scenarios (YouTube, GitHub, Medium, NYTimes, Reddit, etc.), security (XSS, SSRF), encoding, URL handling, JSON-LD, OpenGraph, Twitter Cards, Dublin Core, App Links, structured types (music, video, book, profile), feeds/oEmbed, favicons, and fallback behavior.
@@ -837,8 +886,8 @@ Comprehensive test suite with 28+ test files covering edge cases, real-world sit
 # Run all tests
 bun test
 
-# Run with coverage
-bun test --coverage
+# Run coverage report (text + lcov in ./coverage)
+bun run test:coverage
 
 # Run specific test suites
 bun test tests/security.test.ts

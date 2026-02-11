@@ -123,10 +123,16 @@ const isPrivateHostname = (hostname: string): boolean => {
   return false;
 };
 
+/** Strip brackets from IPv6 hostnames (e.g., "[::1]" -> "::1") */
+const normalizeHostname = (hostname: string): string =>
+  hostname.startsWith("[") && hostname.endsWith("]")
+    ? hostname.slice(1, -1)
+    : hostname;
+
 /** Check if URL points to a private/internal network */
 export const isPrivateUrl = (url: string): boolean => {
   try {
-    const hostname = new URL(url).hostname.toLowerCase();
+    const hostname = normalizeHostname(new URL(url).hostname.toLowerCase());
     return isPrivateHostname(hostname);
   } catch {
     return true;

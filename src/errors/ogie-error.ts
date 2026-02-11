@@ -23,10 +23,11 @@ export class OgieError extends Error {
       return false;
     }
     const e = error as unknown as Record<string, unknown>;
+    const tag = e._tag;
     return (
       typeof e.code === "string" &&
-      typeof e._tag === "string" &&
-      e._tag === "OgieError"
+      typeof tag === "string" &&
+      (tag === "OgieError" || tag === "FetchError" || tag === "ParseError")
     );
   }
 

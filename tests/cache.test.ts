@@ -1,3 +1,4 @@
+/* eslint-disable jest/require-hook, max-statements, no-nested-ternary, require-await */
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 
 import {
@@ -80,9 +81,16 @@ describe("generateCacheKey", () => {
     expect(key1).not.toBe(key2);
   });
 
-  it("ignores non-cache-relevant options", () => {
-    const key1 = generateCacheKey("https://example.com", { timeout: 5000 });
-    const key2 = generateCacheKey("https://example.com", { timeout: 10_000 });
+  it("ignores non-semantic cache controls", () => {
+    const cache = createCache();
+    const key1 = generateCacheKey("https://example.com", {
+      bypassCache: true,
+      cache,
+    });
+    const key2 = generateCacheKey("https://example.com", {
+      bypassCache: false,
+      cache,
+    });
 
     expect(key1).toBe(key2);
   });
@@ -104,6 +112,68 @@ describe("generateCacheKey", () => {
     });
     const key2 = generateCacheKey("https://example.com", {
       convertCharset: false,
+    });
+
+    expect(key1).not.toBe(key2);
+  });
+
+  it("includes timeout in cache key", () => {
+    const key1 = generateCacheKey("https://example.com", {
+      timeout: 5000,
+    });
+    const key2 = generateCacheKey("https://example.com", {
+      timeout: 10_000,
+    });
+
+    expect(key1).not.toBe(key2);
+  });
+
+  it("includes userAgent in cache key", () => {
+    const key1 = generateCacheKey("https://example.com", {
+      userAgent: "ogie-bot/1.0",
+    });
+    const key2 = generateCacheKey("https://example.com", {
+      userAgent: "ogie-bot/2.0",
+    });
+
+    expect(key1).not.toBe(key2);
+  });
+
+  it("includes allowPrivateUrls in cache key", () => {
+    const key1 = generateCacheKey("https://example.com", {
+      allowPrivateUrls: false,
+    });
+    const key2 = generateCacheKey("https://example.com", {
+      allowPrivateUrls: true,
+    });
+
+    expect(key1).not.toBe(key2);
+  });
+
+  it("normalizes header order and case in cache key", () => {
+    const key1 = generateCacheKey("https://example.com", {
+      headers: {
+        "X-Custom": "value",
+        "X-Trace": "trace-id",
+      },
+    });
+
+    const key2 = generateCacheKey("https://example.com", {
+      headers: {
+        "x-custom": "value",
+        "x-trace": "trace-id",
+      },
+    });
+
+    expect(key1).toBe(key2);
+  });
+
+  it("changes cache key when header values differ", () => {
+    const key1 = generateCacheKey("https://example.com", {
+      headers: { "x-custom": "value-a" },
+    });
+    const key2 = generateCacheKey("https://example.com", {
+      headers: { "x-custom": "value-b" },
     });
 
     expect(key1).not.toBe(key2);
@@ -307,80 +377,101 @@ describe("cache - LRU eviction", () => {
 
 describe("extract with cache", () => {
   let cache: MetadataCache;
+  let fetchCalls = 0;
+  let originalFetch: typeof globalThis.fetch;
 
   beforeEach(() => {
     cache = createCache({ maxSize: 10, ttl: 60_000 });
+    fetchCalls = 0;
+    originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+      fetchCalls += 1;
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url;
+      const html = `
+        <!doctype html>
+        <html>
+          <head>
+            <meta property="og:title" content="Fetched ${url}">
+            <meta property="og:description" content="Description for ${url}">
+            <title>Fetched ${url}</title>
+          </head>
+          <body></body>
+        </html>
+      `;
+      return new Response(html, {
+        headers: {
+          "content-type": "text/html; charset=utf-8",
+        },
+      });
+    }) as unknown as typeof globalThis.fetch;
   });
 
   afterEach(() => {
     cache.clear();
+    globalThis.fetch = originalFetch;
   });
 
   it("caching is disabled by default (no cache option)", async () => {
-    // Without a cache instance, results are not cached
-    const result1 = await extract("https://example.com");
+    await extract("https://example.com");
+    await extract("https://example.com");
 
-    // This test just verifies the function works without cache
-    // In a real scenario, we'd mock fetch to verify no caching
-    expect(result1).toBeDefined();
+    expect(fetchCalls).toBe(2);
   });
 
   it("stores result in cache when cache option provided", async () => {
-    // Pre-populate cache to test cache hit
-    const mockMetadata = createMockMetadata("https://example.com");
-    const key = generateCacheKey("https://example.com");
-    cache.set(key, mockMetadata);
-
-    const result = (await extract("https://example.com", {
+    const url = "https://example.com";
+    const result = (await extract(url, {
       cache,
     })) as ExtractSuccess;
 
     expect(result.success).toBe(true);
-    expect(result.data).toEqual(mockMetadata);
+    const key = generateCacheKey(url);
+    expect(cache.has(key)).toBe(true);
   });
 
   it("returns cached result on cache hit", async () => {
-    const mockMetadata = createMockMetadata("https://cached.example.com");
-    const key = generateCacheKey("https://cached.example.com");
-    cache.set(key, mockMetadata);
+    const url = "https://cached.example.com";
 
-    const result = (await extract("https://cached.example.com", {
+    await extract(url, { cache });
+    const result = (await extract(url, {
       cache,
     })) as ExtractSuccess;
 
     expect(result.success).toBe(true);
-    expect(result.data.requestUrl).toBe("https://cached.example.com");
+    expect(result.data.requestUrl).toBe(url);
+    expect(fetchCalls).toBe(1);
   });
 
   it("bypasses cache when bypassCache is true", async () => {
-    const mockMetadata = createMockMetadata("https://bypass.example.com");
-    const key = generateCacheKey("https://bypass.example.com");
-    cache.set(key, mockMetadata);
+    const url = "https://bypass.example.com";
+    await extract(url, { cache });
+    expect(fetchCalls).toBe(1);
 
-    // With bypassCache, should attempt real fetch (which will fail in test)
-    const result = await extract("https://bypass.example.com", {
+    const result = await extract(url, {
       bypassCache: true,
       cache,
     });
 
-    // The result will be a failure because we're actually trying to fetch
-    // Expected: fetch failure because we bypassed cache
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
+    expect(fetchCalls).toBe(2);
   });
 
   it("does not use cache when cache option is false", async () => {
-    const mockMetadata = createMockMetadata("https://nocache.example.com");
-    const key = generateCacheKey("https://nocache.example.com");
-    cache.set(key, mockMetadata);
+    const url = "https://nocache.example.com";
+    const key = generateCacheKey(url);
+    cache.set(key, createMockMetadata(url));
 
-    // Passing cache: false explicitly disables caching
-    const result = await extract("https://nocache.example.com", {
+    const result = await extract(url, {
       cache: false,
     });
 
-    // Should attempt real fetch, not use the pre-populated cache
-    // Will fail because URL doesn't exist, proving cache was not used
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
+    expect(fetchCalls).toBe(1);
   });
 
   it("uses different cache keys for different options - default", async () => {
@@ -416,6 +507,28 @@ describe("extract with cache", () => {
     })) as ExtractSuccess;
 
     expect(result.data.og.title).toBe("OG Only Options");
+  });
+
+  it("uses different cache keys for different headers", async () => {
+    const url = "https://headers.example.com";
+    const keyA = generateCacheKey(url, {
+      headers: { "x-client": "mobile" },
+    });
+    const keyB = generateCacheKey(url, {
+      headers: { "x-client": "desktop" },
+    });
+
+    await extract(url, {
+      cache,
+      headers: { "x-client": "mobile" },
+    });
+    await extract(url, {
+      cache,
+      headers: { "x-client": "desktop" },
+    });
+
+    expect(keyA).not.toBe(keyB);
+    expect(fetchCalls).toBe(2);
   });
 });
 

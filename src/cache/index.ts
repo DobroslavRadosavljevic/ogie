@@ -13,7 +13,50 @@ const CACHE_RELEVANT_OPTIONS = [
   "onlyOpenGraph",
   "fetchOEmbed",
   "convertCharset",
+  "allowPrivateUrls",
+  "userAgent",
+  "timeout",
+  "maxRedirects",
 ] as const;
+
+const normalizeHeaders = (headers?: Record<string, string>): string => {
+  if (!headers) {
+    return "";
+  }
+  const normalized = Object.entries(headers).map(([key, value]) => [
+    key.toLowerCase(),
+    value,
+  ]);
+  if (normalized.length === 0) {
+    return "";
+  }
+
+  return normalized
+    .toSorted(([keyA], [keyB]) => keyA.localeCompare(keyB))
+    .map(([key, value]) => `${key}:${value}`)
+    .join("|");
+};
+
+const getRelevantOptionPairs = (options: ExtractOptions): string[] => {
+  const relevantPairs: string[] = [];
+  for (const key of CACHE_RELEVANT_OPTIONS) {
+    const value = options[key];
+    if (value !== undefined) {
+      relevantPairs.push(`${key}:${String(value)}`);
+    }
+  }
+  return relevantPairs;
+};
+
+const appendHeadersHash = (
+  relevantPairs: string[],
+  headers?: Record<string, string>
+): void => {
+  const headersHash = normalizeHeaders(headers);
+  if (headersHash) {
+    relevantPairs.push(`headers:${headersHash}`);
+  }
+};
 
 /**
  * Generate a stable hash for cache-relevant options
@@ -24,13 +67,8 @@ const hashOptions = (options?: ExtractOptions): string => {
     return "";
   }
 
-  const relevantPairs: string[] = [];
-  for (const key of CACHE_RELEVANT_OPTIONS) {
-    const value = options[key];
-    if (value !== undefined) {
-      relevantPairs.push(`${key}:${String(value)}`);
-    }
-  }
+  const relevantPairs = getRelevantOptionPairs(options);
+  appendHeadersHash(relevantPairs, options.headers);
 
   return relevantPairs.length > 0 ? relevantPairs.toSorted().join(",") : "";
 };

@@ -1,3 +1,5 @@
+import type { ErrorCode } from "./types";
+
 import { OgieError } from "./ogie-error";
 
 /**
@@ -11,9 +13,10 @@ export class FetchError extends OgieError {
     message: string,
     url: string,
     statusCode?: number,
-    cause?: Error
+    cause?: Error,
+    code: ErrorCode = "FETCH_ERROR"
   ) {
-    super(message, "FETCH_ERROR", url, cause);
+    super(message, code, url, cause);
     this.name = "FetchError";
     this.statusCode = statusCode;
   }

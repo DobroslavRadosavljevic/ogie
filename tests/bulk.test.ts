@@ -1,6 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 
-import { extractBulk, type BulkProgress, type ExtractSuccess } from "../src";
+import {
+  extractBulk,
+  isOgieError,
+  type BulkProgress,
+  type ExtractFailure,
+  type ExtractSuccess,
+} from "../src";
 
 // =============================================================================
 // Test Server Setup
@@ -77,6 +83,23 @@ const handleRequest = async (req: Request): Promise<Response> => {
     createHtmlResponse(`Page ${path}`)
   );
 };
+
+const createRedirectLoopHandler =
+  (baseUrl: string) =>
+  (req: Request): Response => {
+    const { pathname } = new URL(req.url);
+    const responses: Record<string, Response> = {
+      "/loop": new Response(null, {
+        headers: { location: `${baseUrl}/loop` },
+        status: 302,
+      }),
+      "/start": new Response(null, {
+        headers: { location: `${baseUrl}/loop` },
+        status: 302,
+      }),
+    };
+    return responses[pathname] ?? new Response("Not found", { status: 404 });
+  };
 
 beforeAll(() => {
   server = Bun.serve({
@@ -244,6 +267,54 @@ describe("extractBulk", () => {
       });
 
       expect(result.results.length).toBe(3);
+    });
+
+    it("preserves INVALID_URL error code in bulk results", async () => {
+      const result = await extractBulk(["not-a-valid-url"], {
+        continueOnError: true,
+      });
+
+      expect(result.stats.failed).toBe(1);
+      const failure = result.results[0].result as ExtractFailure;
+      expect(failure.success).toBe(false);
+      expect(failure.error.code).toBe("INVALID_URL");
+      expect(isOgieError(failure.error)).toBe(true);
+    });
+
+    it("preserves timeout error code in bulk results", async () => {
+      const result = await extractBulk([`${TEST_HOST}/delay/500`], {
+        extractOptions: { allowPrivateUrls: true },
+        timeout: 25,
+      });
+
+      expect(result.stats.failed).toBe(1);
+      const failure = result.results[0].result as ExtractFailure;
+      expect(failure.success).toBe(false);
+      expect(failure.error.code).toBe("TIMEOUT");
+      expect(isOgieError(failure.error)).toBe(true);
+    });
+
+    it("preserves redirect limit errors in bulk results", async () => {
+      const redirectServerPort = 9988;
+      const redirectServerHost = `http://localhost:${redirectServerPort}`;
+      const redirectServer = Bun.serve({
+        fetch: createRedirectLoopHandler(redirectServerHost),
+        port: redirectServerPort,
+      });
+
+      try {
+        const result = await extractBulk([`${redirectServerHost}/start`], {
+          extractOptions: { allowPrivateUrls: true },
+          timeout: 200,
+        });
+
+        expect(result.stats.failed).toBe(1);
+        const failure = result.results[0].result as ExtractFailure;
+        expect(failure.success).toBe(false);
+        expect(failure.error.code).toBe("REDIRECT_LIMIT");
+      } finally {
+        redirectServer.stop();
+      }
     });
   });
 

@@ -4,12 +4,16 @@ Thanks for your interest in contributing!
 
 ## Development
 
-1. Fork and clone the repository
-2. Install dependencies: `bun install`
-3. Make your changes
-4. Run tests: `bun test`
-5. Run linting: `bun run lint`
-6. Submit a pull request
+1. Fork and clone the repository.
+2. Install dependencies: `bun install`.
+3. Make your changes.
+4. Run quality checks:
+   - `bun run lint`
+   - `bun run typecheck`
+   - `bun run test`
+   - `bun run test:coverage`
+5. Build outputs: `bun run build`.
+6. Submit a pull request.
 
 ## Guidelines
 
@@ -17,6 +21,15 @@ Thanks for your interest in contributing!
 - Write tests for new features
 - Keep commits focused and descriptive
 - Update documentation as needed
+- If your change affects public behavior, update `MIGRATION-v2.md` when relevant.
+
+## Release Notes and Breaking Changes
+
+- Breaking changes are tracked in `MIGRATION-v2.md`.
+- Public API changes should include:
+  - Updated README examples
+  - Updated tests
+  - Clear migration instructions
 
 ## Reporting Issues
 
