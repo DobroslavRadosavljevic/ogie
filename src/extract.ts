@@ -2,10 +2,13 @@ import { load, type CheerioAPI } from "cheerio";
 
 import type {
   ExtractOptions,
+  ExtractionMode,
   ExtractResult,
+  ExtractWithDiagnosticsResult,
   Metadata,
   OEmbedData,
   OEmbedDiscovery,
+  SocialValidationReport,
 } from "./types";
 
 import { generateCacheKey, type MetadataCache } from "./cache";
@@ -30,6 +33,12 @@ import { parseProfile } from "./parsers/profile";
 import { parseTwitterCard } from "./parsers/twitter";
 import { parseVideo } from "./parsers/video";
 import { isPrivateUrl, isValidUrl } from "./utils/url";
+import { filterSocialMetadata } from "./validation/social/filter-social";
+import { collectSocialTagIndex } from "./validation/social/tag-index";
+import {
+  validateSocialMetadata,
+  type ValidateSocialMetadataInput,
+} from "./validation/social/validate-social";
 
 const VERSION = "2.0.0";
 
@@ -40,8 +49,24 @@ const createFailure = (error: OgieError): ExtractResult => ({
   success: false,
 });
 
+const createFailureWithDiagnostics = (
+  error: OgieError
+): ExtractWithDiagnosticsResult => ({
+  error,
+  success: false,
+});
+
 const createSuccess = (data: Metadata): ExtractResult => ({
   data,
+  success: true,
+});
+
+const createSuccessWithDiagnostics = (
+  data: Metadata,
+  diagnostics: SocialValidationReport
+): ExtractWithDiagnosticsResult => ({
+  data,
+  diagnostics,
   success: true,
 });
 
@@ -58,6 +83,7 @@ interface ParsedHtml {
   oEmbedDiscovery: OEmbedDiscovery;
   og: ReturnType<typeof parseOpenGraph>;
   profile: ReturnType<typeof parseProfile>;
+  socialTagIndex: ValidateSocialMetadataInput["tagIndex"];
   twitter: ReturnType<typeof parseTwitterCard>;
   video: ReturnType<typeof parseVideo>;
 }
@@ -83,6 +109,7 @@ const normalizeMetaAttributes = ($: CheerioAPI): void => {
 const parseHtml = (html: string, baseUrl?: string): ParsedHtml => {
   const $ = load(html);
   normalizeMetaAttributes($);
+
   return {
     $,
     appLinks: parseAppLinks($),
@@ -96,20 +123,29 @@ const parseHtml = (html: string, baseUrl?: string): ParsedHtml => {
     oEmbedDiscovery: parseOEmbedDiscovery($),
     og: parseOpenGraph($, baseUrl),
     profile: parseProfile($),
+    socialTagIndex: collectSocialTagIndex($),
     twitter: parseTwitterCard($, baseUrl),
     video: parseVideo($),
   };
 };
+
+const getExtractionMode = (options?: ExtractOptions): ExtractionMode =>
+  options?.mode === "platform-valid" ? "platform-valid" : "best-effort";
+
+const shouldSkipOpenGraphFallback = (options?: ExtractOptions): boolean =>
+  (options?.onlyOpenGraph ?? false) ||
+  getExtractionMode(options) === "platform-valid";
 
 const applyFallbacks = (
   og: Metadata["og"],
   twitter: Metadata["twitter"],
   basic: Metadata["basic"],
   skipFallbacks: boolean
-) => {
+): Metadata["og"] => {
   if (skipFallbacks) {
     return og;
   }
+
   return {
     ...og,
     description: og.description ?? twitter.description ?? basic.description,
@@ -165,12 +201,14 @@ const buildMetadataFromParsed = ({
     profile,
     video,
   } = parsed;
+
   const ogWithFallbacks = applyFallbacks(
     og,
     twitter,
     basic,
-    options?.onlyOpenGraph ?? false
+    shouldSkipOpenGraphFallback(options)
   );
+
   return {
     appLinks: hasData(appLinks) ? appLinks : undefined,
     article: hasData(article) ? article : undefined,
@@ -194,48 +232,101 @@ const buildMetadataFromParsed = ({
   };
 };
 
-interface BuildMetadataOptions {
-  html: string;
-  requestUrl: string;
-  finalUrl: string;
-  options?: ExtractOptions;
-  statusCode?: number;
-  contentType?: string;
-  charset?: string;
-  oEmbed?: OEmbedData;
+interface ProcessModeResult {
+  metadata: Metadata;
+  diagnostics?: SocialValidationReport;
 }
 
-const buildMetadata = ({
-  html,
-  requestUrl,
-  finalUrl,
-  options,
-  statusCode,
-  contentType,
-  charset,
-  oEmbed,
-}: BuildMetadataOptions): Metadata => {
-  const parsed = parseHtml(html, finalUrl);
-  return buildMetadataFromParsed({
-    charset,
-    contentType,
-    finalUrl,
-    oEmbed,
-    options,
-    parsed,
-    requestUrl,
-    statusCode,
+const applyModeToMetadata = (
+  metadata: Metadata,
+  parsed: ParsedHtml,
+  options: ExtractOptions | undefined,
+  includeDiagnostics: boolean
+): ProcessModeResult => {
+  const mode = getExtractionMode(options);
+  const isPlatformValidMode = mode === "platform-valid";
+
+  if (!includeDiagnostics && mode === "best-effort") {
+    return { metadata };
+  }
+
+  const outputSocial = isPlatformValidMode
+    ? filterSocialMetadata(metadata)
+    : { og: metadata.og, twitter: metadata.twitter };
+
+  const diagnostics = validateSocialMetadata({
+    metadata,
+    outputSocial,
+    rawBasic: parsed.basic,
+    rawOg: parsed.og,
+    rawTwitter: parsed.twitter,
+    tagIndex: parsed.socialTagIndex,
   });
+
+  if (!isPlatformValidMode) {
+    return includeDiagnostics ? { diagnostics, metadata } : { metadata };
+  }
+
+  const filteredMetadata: Metadata = {
+    ...metadata,
+    og: outputSocial.og,
+    twitter: outputSocial.twitter,
+  };
+
+  return includeDiagnostics
+    ? { diagnostics, metadata: filteredMetadata }
+    : { metadata: filteredMetadata };
 };
 
-/** Extract metadata from an HTML string */
-export const extractFromHtml = (
+interface BuildResultFromParsedOptions extends BuildMetadataFromParsedOptions {
+  includeDiagnostics: boolean;
+}
+
+const buildResultFromParsed = ({
+  includeDiagnostics,
+  ...buildOptions
+}: BuildResultFromParsedOptions):
+  | ExtractResult
+  | ExtractWithDiagnosticsResult => {
+  const metadata = buildMetadataFromParsed(buildOptions);
+  const processed = applyModeToMetadata(
+    metadata,
+    buildOptions.parsed,
+    buildOptions.options,
+    includeDiagnostics
+  );
+
+  if (!includeDiagnostics) {
+    return createSuccess(processed.metadata);
+  }
+
+  return createSuccessWithDiagnostics(
+    processed.metadata,
+    processed.diagnostics ?? {
+      invalidFields: [],
+      missingRequiredFields: [],
+      sourceTags: {},
+      summary: {
+        invalid: 0,
+        missingRequired: 0,
+        valid: 0,
+        warnings: 0,
+      },
+      validFields: [],
+      version: 1,
+      warnings: [],
+    }
+  );
+};
+
+const parseHtmlInput = (
   html: string,
   options?: ExtractOptions
-): ExtractResult => {
+): { parsed: ParsedHtml; requestUrl: string } | ParseError => {
   if (!html || typeof html !== "string") {
-    return createFailure(
-      new ParseError("HTML input must be a non-empty string", HTML_INPUT_URL)
+    return new ParseError(
+      "HTML input must be a non-empty string",
+      HTML_INPUT_URL
     );
   }
 
@@ -243,16 +334,62 @@ export const extractFromHtml = (
   const requestUrl = baseUrl || HTML_INPUT_URL;
 
   try {
-    return createSuccess(
-      buildMetadata({
-        finalUrl: requestUrl,
-        html,
-        options,
-        requestUrl,
-      })
-    );
+    return {
+      parsed: parseHtml(html, requestUrl),
+      requestUrl,
+    };
+  } catch (error) {
+    return wrapError(error, requestUrl) as ParseError;
+  }
+};
+
+/** Extract metadata from an HTML string */
+export const extractFromHtml = (
+  html: string,
+  options?: ExtractOptions
+): ExtractResult => {
+  const parsedInput = parseHtmlInput(html, options);
+  if (parsedInput instanceof ParseError || parsedInput instanceof OgieError) {
+    return createFailure(parsedInput);
+  }
+
+  const { parsed, requestUrl } = parsedInput;
+
+  try {
+    return buildResultFromParsed({
+      finalUrl: requestUrl,
+      includeDiagnostics: false,
+      options,
+      parsed,
+      requestUrl,
+    }) as ExtractResult;
   } catch (error) {
     return createFailure(wrapError(error, requestUrl));
+  }
+};
+
+/** Extract metadata from an HTML string with diagnostics */
+export const extractFromHtmlWithDiagnostics = (
+  html: string,
+  options?: ExtractOptions
+): ExtractWithDiagnosticsResult => {
+  const parsedInput = parseHtmlInput(html, options);
+  if (parsedInput instanceof ParseError || parsedInput instanceof OgieError) {
+    return createFailureWithDiagnostics(parsedInput);
+  }
+
+  const { parsed, requestUrl } = parsedInput;
+
+  try {
+    return buildResultFromParsed({
+      finalUrl: requestUrl,
+      includeDiagnostics: true,
+      options,
+      parsed,
+      requestUrl,
+    }) as ExtractWithDiagnosticsResult;
+  } catch (error) {
+    return createFailureWithDiagnostics(wrapError(error, requestUrl));
   }
 };
 
@@ -556,18 +693,41 @@ const extractWithFetch = async (
   const parsed = parseHtml(html, finalUrl);
   const oEmbed = await maybeOEmbedData(parsed, options);
 
-  return createSuccess(
-    buildMetadataFromParsed({
-      charset,
-      contentType,
-      finalUrl,
-      oEmbed,
-      options,
-      parsed,
-      requestUrl: url,
-      statusCode,
-    })
+  return buildResultFromParsed({
+    charset,
+    contentType,
+    finalUrl,
+    includeDiagnostics: false,
+    oEmbed,
+    options,
+    parsed,
+    requestUrl: url,
+    statusCode,
+  }) as ExtractResult;
+};
+
+const extractWithFetchDiagnostics = async (
+  url: string,
+  options?: ExtractOptions
+): Promise<ExtractWithDiagnosticsResult> => {
+  const { html, finalUrl, statusCode, contentType, charset } = await fetchUrl(
+    url,
+    options
   );
+  const parsed = parseHtml(html, finalUrl);
+  const oEmbed = await maybeOEmbedData(parsed, options);
+
+  return buildResultFromParsed({
+    charset,
+    contentType,
+    finalUrl,
+    includeDiagnostics: true,
+    oEmbed,
+    options,
+    parsed,
+    requestUrl: url,
+    statusCode,
+  }) as ExtractWithDiagnosticsResult;
 };
 
 /**
@@ -640,6 +800,12 @@ const performExtraction = async (
   return result;
 };
 
+const withDiagnosticsDefaults = (options?: ExtractOptions): ExtractOptions => ({
+  ...options,
+  bypassCache: true,
+  cache: false,
+});
+
 /** Extract metadata from a URL */
 export const extract = async (
   url: string,
@@ -664,5 +830,30 @@ export const extract = async (
     return await performExtraction(url, options);
   } catch (error) {
     return createFailure(wrapError(error, url));
+  }
+};
+
+/** Extract metadata from a URL with diagnostics */
+export const extractWithDiagnostics = async (
+  url: string,
+  options?: ExtractOptions
+): Promise<ExtractWithDiagnosticsResult> => {
+  if (!isValidUrl(url)) {
+    return createFailureWithDiagnostics(
+      new OgieError(
+        "Invalid URL: must be a valid HTTP or HTTPS URL",
+        "INVALID_URL",
+        url
+      )
+    );
+  }
+
+  try {
+    return await extractWithFetchDiagnostics(
+      url,
+      withDiagnosticsDefaults(options)
+    );
+  } catch (error) {
+    return createFailureWithDiagnostics(wrapError(error, url));
   }
 };

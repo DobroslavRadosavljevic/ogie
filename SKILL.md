@@ -1,15 +1,15 @@
 ---
 name: ogie
-description: Extract OpenGraph, Twitter Cards, and metadata from URLs or HTML. Use when building link previews, SEO tools, or scraping webpage metadata.
+description: Extract OpenGraph, Twitter Cards, and metadata from URLs or HTML, with dual extraction modes and social diagnostics for validator workflows.
 license: MIT
 metadata:
   author: dobroslavradosavljevic
-  version: "1.0.1"
+  version: "1.1.0"
 ---
 
 # OpenGraph & Metadata Extraction
 
-Use this skill when helping users extract metadata from webpages, build link previews, create SEO tools, or parse OpenGraph/Twitter Card data.
+Use this skill when helping users extract metadata from webpages, build link previews, create SEO tools, parse OpenGraph/Twitter Card data, or run social metadata validation audits.
 
 ## Quick Start
 
@@ -70,6 +70,36 @@ const result = extractFromHtml(html, {
 });
 ```
 
+### `extractWithDiagnostics(url, options?)`
+
+Fetch metadata and return social diagnostics (`valid`, `invalid`, `missing`, `warnings`).
+
+```typescript
+import { extractWithDiagnostics } from "ogie";
+
+const result = await extractWithDiagnostics("https://example.com", {
+  mode: "platform-valid",
+});
+
+if (result.success) {
+  console.log(result.data.og.title);
+  console.log(result.diagnostics.summary);
+}
+```
+
+### `extractFromHtmlWithDiagnostics(html, options?)`
+
+Parse HTML and return metadata with social diagnostics.
+
+```typescript
+import { extractFromHtmlWithDiagnostics } from "ogie";
+
+const result = extractFromHtmlWithDiagnostics(html, {
+  baseUrl: "https://example.com",
+  mode: "platform-valid",
+});
+```
+
 ### `extractBulk(urls, options?)`
 
 Extract metadata from multiple URLs with rate limiting.
@@ -113,7 +143,7 @@ await extract("https://github.com", { cache }); // Instant
 
 ## Extracted Metadata Types
 
-Ogie extracts from 12 sources:
+Ogie extracts from 13 sources:
 
 | Property               | Description                       |
 | ---------------------- | --------------------------------- |
@@ -159,27 +189,33 @@ if (!result.success) {
 
 ### ExtractOptions
 
-| Option             | Type      | Default    | Description                 |
-| ------------------ | --------- | ---------- | --------------------------- |
-| `timeout`          | `number`  | `10000`    | Request timeout in ms       |
-| `maxRedirects`     | `number`  | `5`        | Max redirects to follow     |
-| `userAgent`        | `string`  | `ogie/1.0` | Custom User-Agent           |
-| `baseUrl`          | `string`  | —          | Base URL for relative paths |
-| `fetchOEmbed`      | `boolean` | `false`    | Fetch oEmbed endpoint       |
-| `convertCharset`   | `boolean` | `false`    | Auto charset detection      |
-| `allowPrivateUrls` | `boolean` | `false`    | Allow localhost/private IPs |
-| `cache`            | `Cache`   | —          | Cache instance              |
-| `bypassCache`      | `boolean` | `false`    | Force fresh fetch           |
+| Option             | Type                                | Default         | Description                           |
+| ------------------ | ----------------------------------- | --------------- | ------------------------------------- |
+| `timeout`          | `number`                            | `10000`         | Request timeout in ms                 |
+| `maxRedirects`     | `number`                            | `5`             | Max redirects to follow               |
+| `userAgent`        | `string`                            | `ogie/2.0`      | Custom User-Agent string              |
+| `headers`          | `Record<string, string>`            | `{}`            | Custom HTTP headers                   |
+| `baseUrl`          | `string`                            | —               | Base URL for resolving relative paths |
+| `mode`             | `"best-effort" \| "platform-valid"` | `"best-effort"` | Extraction mode behavior              |
+| `onlyOpenGraph`    | `boolean`                           | `false`         | Legacy: skip OG fallback parsing only |
+| `allowPrivateUrls` | `boolean`                           | `false`         | Allow localhost/private IPs           |
+| `fetchOEmbed`      | `boolean`                           | `false`         | Fetch oEmbed endpoint                 |
+| `convertCharset`   | `boolean`                           | `false`         | Auto charset detection                |
+| `cache`            | `MetadataCache \| false`            | —               | Cache instance                        |
+| `bypassCache`      | `boolean`                           | `false`         | Force fresh fetch                     |
 
 ### BulkOptions
 
-| Option                 | Type      | Default | Description                    |
-| ---------------------- | --------- | ------- | ------------------------------ |
-| `concurrency`          | `number`  | `10`    | Max parallel requests          |
-| `concurrencyPerDomain` | `number`  | `3`     | Max parallel per domain        |
-| `minDelayPerDomain`    | `number`  | `200`   | Min ms between domain requests |
-| `requestsPerMinute`    | `number`  | `600`   | Global rate limit              |
-| `continueOnError`      | `boolean` | `true`  | Continue on failures           |
+| Option                 | Type       | Default | Description                    |
+| ---------------------- | ---------- | ------- | ------------------------------ |
+| `concurrency`          | `number`   | `10`    | Max parallel requests globally |
+| `concurrencyPerDomain` | `number`   | `3`     | Max parallel per domain        |
+| `minDelayPerDomain`    | `number`   | `200`   | Min ms between domain requests |
+| `requestsPerMinute`    | `number`   | `600`   | Global rate limit              |
+| `timeout`              | `number`   | `30000` | Timeout per request            |
+| `continueOnError`      | `boolean`  | `true`  | Continue on failures           |
+| `onProgress`           | `function` | —       | Progress callback              |
+| `extractOptions`       | `object`   | —       | Options passed to each extract |
 
 ## Security
 
@@ -196,6 +232,12 @@ await extract("http://localhost:3000", {
   allowPrivateUrls: true,
 });
 ```
+
+## Mode Selection
+
+- Use `mode: "best-effort"` when you want maximum metadata coverage for downstream processing (summaries, indexing, enrichment).
+- Use `mode: "platform-valid"` when you want only OG/Twitter values that pass strict social validation filters.
+- Use `extractWithDiagnostics` or `extractFromHtmlWithDiagnostics` when you need validator-style reporting (`valid`, `invalid`, `missing`, `warnings`).
 
 ## Common Use Cases
 
@@ -217,13 +259,15 @@ if (result.success) {
 ### SEO Audit
 
 ```typescript
-const result = await extract(url);
+import { extractWithDiagnostics } from "ogie";
+
+const result = await extractWithDiagnostics(url, {
+  mode: "platform-valid",
+});
 if (result.success) {
-  const issues = [];
-  if (!result.data.og.title) issues.push("Missing og:title");
-  if (!result.data.og.description) issues.push("Missing og:description");
-  if (!result.data.og.images.length) issues.push("Missing og:image");
-  if (!result.data.twitter.card) issues.push("Missing twitter:card");
+  console.log(result.diagnostics.missingRequiredFields);
+  console.log(result.diagnostics.invalidFields);
+  console.log(result.diagnostics.warnings);
 }
 ```
 

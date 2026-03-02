@@ -10,6 +10,7 @@ const DEFAULT_MAX_SIZE = 100;
 
 /** Options that affect extraction result (used for cache key generation) */
 const CACHE_RELEVANT_OPTIONS = [
+  "mode",
   "onlyOpenGraph",
   "fetchOEmbed",
   "convertCharset",

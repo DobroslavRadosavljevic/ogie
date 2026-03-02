@@ -3,7 +3,12 @@
  */
 
 // Main extraction functions
-export { extract, extractFromHtml } from "./extract";
+export {
+  extract,
+  extractFromHtml,
+  extractFromHtmlWithDiagnostics,
+  extractWithDiagnostics,
+} from "./extract";
 
 // Bulk extraction
 export { extractBulk } from "./bulk";
@@ -26,9 +31,22 @@ export {
 export type {
   ExtractResult,
   ExtractSuccess,
+  ExtractWithDiagnosticsSuccess,
+  ExtractWithDiagnosticsResult,
   ExtractFailure,
   ExtractOptions,
+  ExtractionMode,
   Metadata,
+  SocialValidationReport,
+  SocialRuleCode,
+  SocialNamespace,
+  ValidationSeverity,
+  RequirementLevel,
+  ValidFieldReport,
+  InvalidFieldReport,
+  MissingRequiredFieldReport,
+  ValidationWarningReport,
+  SourceTagLocation,
   OpenGraphData,
   OpenGraphImage,
   OpenGraphVideo,

@@ -6,11 +6,13 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0+-blue.svg)](https://www.typescriptlang.org/)
 
-A comprehensive metadata extraction library that pulls OpenGraph, Twitter Cards, JSON-LD, Dublin Core, and more from any webpage. Built with TypeScript, secure by default, and optimized for production use.
+A comprehensive metadata extraction library that pulls OpenGraph, Twitter Cards, JSON-LD, Dublin Core, and more from any webpage. Built with TypeScript, secure by default, optimized for production use, and now equipped with dual extraction modes plus social validation diagnostics.
 
 ## ✨ Features
 
 - 🎯 **Comprehensive Extraction** — OpenGraph, Twitter Cards, JSON-LD, Dublin Core, Article, Video, Music, Book, Profile, App Links, oEmbed, RSS/Atom Feeds
+- 🧭 **Dual Extraction Modes** — `best-effort` for maximum data capture or `platform-valid` for strict social output
+- ✅ **Social Diagnostics** — Get `valid`, `invalid`, `missing required`, and `warnings` reports for OG/Twitter validator workflows
 - 🚀 **High Performance** — LRU caching with TTL, bulk extraction with smart rate limiting
 - 🔒 **Secure by Default** — SSRF protection, private IP blocking, URL validation
 - 📦 **Minimal Dependencies** — Just 4 production deps (cheerio, quick-lru, bottleneck, iconv-lite)
@@ -64,6 +66,13 @@ if (result.success) {
 ```
 
 ## 📖 API Reference
+
+### Extraction Modes
+
+| Mode             | Goal                                             | Behavior                                                                      |
+| ---------------- | ------------------------------------------------ | ----------------------------------------------------------------------------- |
+| `best-effort`    | Extract as much metadata as possible             | Preserves current permissive parsing and OG fallback behavior                 |
+| `platform-valid` | Return only social values valid for platform use | Filters invalid OG/Twitter fields and disables OG fallback from Twitter/basic |
 
 ### `extract(url, options?)` 🌐
 
@@ -123,6 +132,50 @@ if (result.success) {
 ```
 
 **Returns:** `ExtractResult`
+
+---
+
+### `extractWithDiagnostics(url, options?)` 🔎
+
+Extract metadata from a URL and return a social validation report for OpenGraph/Twitter.
+
+```typescript
+import { extractWithDiagnostics } from "ogie";
+
+const result = await extractWithDiagnostics("https://example.com", {
+  mode: "platform-valid", // optional: "best-effort" | "platform-valid"
+});
+
+if (result.success) {
+  console.log(result.data.og.title);
+  console.log(result.diagnostics.summary);
+  console.log(result.diagnostics.missingRequiredFields);
+}
+```
+
+**Returns:** `Promise<ExtractWithDiagnosticsResult>`
+
+---
+
+### `extractFromHtmlWithDiagnostics(html, options?)` 🧪
+
+Extract metadata from HTML and return social validation diagnostics in the same call.
+
+```typescript
+import { extractFromHtmlWithDiagnostics } from "ogie";
+
+const result = extractFromHtmlWithDiagnostics(html, {
+  baseUrl: "https://example.com",
+  mode: "platform-valid",
+});
+
+if (result.success) {
+  console.log(result.data.twitter.card);
+  console.log(result.diagnostics.invalidFields);
+}
+```
+
+**Returns:** `ExtractWithDiagnosticsResult`
 
 ---
 
@@ -221,7 +274,11 @@ const key2 = generateCacheKey("https://example.com/"); // Same key (normalized)
 
 // Different options produce different keys
 const key3 = generateCacheKey("https://example.com", { fetchOEmbed: true });
+const key4 = generateCacheKey("https://example.com", {
+  mode: "platform-valid",
+});
 console.log(key1 === key3); // false
+console.log(key1 === key4); // false
 ```
 
 **Returns:** `string`
@@ -610,23 +667,36 @@ Discovered RSS, Atom, and JSON Feed links from the page.
 | `text/atom+xml`          | `atom`    |
 | `application/feed+json`  | `json`    |
 
+## 🧪 Social Diagnostics
+
+`extractWithDiagnostics` and `extractFromHtmlWithDiagnostics` return a `diagnostics` object with:
+
+- `validFields` — social fields that passed validation
+- `invalidFields` — fields found but invalid for platform-valid social output
+- `missingRequiredFields` — required social tags that are missing
+- `warnings` — fallback usage, non-canonical attributes, duplicate tags, outside-head tags
+- `summary` — aggregate counters (`valid`, `invalid`, `missingRequired`, `warnings`)
+
+This is designed for validator-style workflows (for example OG/Twitter audits and social meta quality checks).
+
 ## ⚙️ Options Reference
 
 ### ExtractOptions
 
-| Option             | Type                     | Default    | Description                     |
-| ------------------ | ------------------------ | ---------- | ------------------------------- |
-| `timeout`          | `number`                 | `10000`    | Request timeout in ms           |
-| `maxRedirects`     | `number`                 | `5`        | Max redirects to follow         |
-| `userAgent`        | `string`                 | `ogie/2.0` | Custom User-Agent string        |
-| `headers`          | `Record<string, string>` | `{}`       | Custom HTTP headers             |
-| `baseUrl`          | `string`                 | —          | Base URL for resolving relative |
-| `onlyOpenGraph`    | `boolean`                | `false`    | Skip fallback parsing           |
-| `allowPrivateUrls` | `boolean`                | `false`    | Allow localhost/private IPs     |
-| `fetchOEmbed`      | `boolean`                | `false`    | Fetch oEmbed endpoint           |
-| `convertCharset`   | `boolean`                | `false`    | Auto charset detection          |
-| `cache`            | `MetadataCache \| false` | —          | Cache instance                  |
-| `bypassCache`      | `boolean`                | `false`    | Force fresh fetch               |
+| Option             | Type                                | Default         | Description                           |
+| ------------------ | ----------------------------------- | --------------- | ------------------------------------- |
+| `timeout`          | `number`                            | `10000`         | Request timeout in ms                 |
+| `maxRedirects`     | `number`                            | `5`             | Max redirects to follow               |
+| `userAgent`        | `string`                            | `ogie/2.0`      | Custom User-Agent string              |
+| `headers`          | `Record<string, string>`            | `{}`            | Custom HTTP headers                   |
+| `baseUrl`          | `string`                            | —               | Base URL for resolving relative       |
+| `mode`             | `"best-effort" \| "platform-valid"` | `"best-effort"` | Extraction mode behavior              |
+| `onlyOpenGraph`    | `boolean`                           | `false`         | Legacy: skip OG fallback parsing only |
+| `allowPrivateUrls` | `boolean`                           | `false`         | Allow localhost/private IPs           |
+| `fetchOEmbed`      | `boolean`                           | `false`         | Fetch oEmbed endpoint                 |
+| `convertCharset`   | `boolean`                           | `false`         | Auto charset detection                |
+| `cache`            | `MetadataCache \| false`            | —               | Cache instance                        |
+| `bypassCache`      | `boolean`                           | `false`         | Force fresh fetch                     |
 
 ### BulkOptions
 
@@ -726,7 +796,7 @@ Each error class provides:
 
 ## 📦 Exported Types
 
-All types are exported for use in your TypeScript code:
+All public root types are exported for use in your TypeScript code:
 
 ```typescript
 import type {
@@ -734,8 +804,21 @@ import type {
   Metadata,
   ExtractResult,
   ExtractSuccess,
+  ExtractWithDiagnosticsSuccess,
+  ExtractWithDiagnosticsResult,
   ExtractFailure,
   ExtractOptions,
+  ExtractionMode,
+  SocialValidationReport,
+  SocialRuleCode,
+  SocialNamespace,
+  ValidationSeverity,
+  RequirementLevel,
+  ValidFieldReport,
+  InvalidFieldReport,
+  MissingRequiredFieldReport,
+  ValidationWarningReport,
+  SourceTagLocation,
 
   // OpenGraph types
   OpenGraphData,

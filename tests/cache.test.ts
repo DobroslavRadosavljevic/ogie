@@ -139,6 +139,28 @@ describe("generateCacheKey", () => {
     expect(key1).not.toBe(key2);
   });
 
+  it("includes mode in cache key", () => {
+    const key1 = generateCacheKey("https://example.com", {
+      mode: "best-effort",
+    });
+    const key2 = generateCacheKey("https://example.com", {
+      mode: "platform-valid",
+    });
+
+    expect(key1).not.toBe(key2);
+  });
+
+  it("includes maxRedirects in cache key", () => {
+    const key1 = generateCacheKey("https://example.com", {
+      maxRedirects: 3,
+    });
+    const key2 = generateCacheKey("https://example.com", {
+      maxRedirects: 8,
+    });
+
+    expect(key1).not.toBe(key2);
+  });
+
   it("includes allowPrivateUrls in cache key", () => {
     const key1 = generateCacheKey("https://example.com", {
       allowPrivateUrls: false,

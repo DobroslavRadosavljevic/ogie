@@ -11,6 +11,23 @@ This guide summarizes the breaking changes introduced in `ogie@2.x` and how to u
 - Cache keys include request-shaping options.
 - New tree-shakeable subpath exports are available.
 
+## 0) Additive Update: Dual Extraction Modes + Social Diagnostics
+
+`ogie@2.x` now includes additive, backward-compatible features for social metadata workflows:
+
+- `mode` option in `ExtractOptions`:
+  - `best-effort` (default): existing permissive behavior
+  - `platform-valid`: strict OG/Twitter filtering
+- New diagnostics APIs:
+  - `extractWithDiagnostics(url, options?)`
+  - `extractFromHtmlWithDiagnostics(html, options?)`
+- New social diagnostics result types (`ExtractWithDiagnosticsResult`, `ExtractWithDiagnosticsSuccess`, `SocialValidationReport`, and related rule/field types including `SocialRuleCode`, `ValidationSeverity`, and `RequirementLevel`)
+
+No existing API return contracts were changed:
+
+- `extract`, `extractFromHtml`, and `extractBulk` keep the same result shape.
+- `onlyOpenGraph` remains supported as a legacy fallback control.
+
 ## 1) Bulk Error Objects Are Now Typed Instances
 
 ### v1 behavior
@@ -66,6 +83,7 @@ Cache key included only a subset of options (`onlyOpenGraph`, `fetchOEmbed`, `co
 
 Cache key now also includes:
 
+- `mode`
 - `allowPrivateUrls`
 - `userAgent`
 - `timeout`
@@ -106,7 +124,10 @@ import { extract, extractBulk, createCache } from "ogie";
 1. Re-run tests that assert specific error codes.
 2. Review cache hit-rate assumptions if you vary headers/user-agent/options per request.
 3. Adopt subpath imports if you want smaller bundles.
-4. Rebuild and verify with:
+4. For social validator workflows, prefer:
+   - `mode: "platform-valid"`
+   - `extractWithDiagnostics` / `extractFromHtmlWithDiagnostics`
+5. Rebuild and verify with:
    - `bun run lint`
    - `bun run typecheck`
    - `bun run test`

@@ -149,8 +149,133 @@ export interface ExtractFailure {
 export type ExtractResult = ExtractSuccess | ExtractFailure;
 
 // =============================================================================
+// Social Validation Types
+// =============================================================================
+
+/** Social metadata namespace */
+export type SocialNamespace = "og" | "twitter";
+
+/** Validation severity */
+export type ValidationSeverity = "error" | "warning" | "info";
+
+/** Requirement source */
+export type RequirementLevel = "spec" | "parser_contract";
+
+/** Stable social validation rule codes */
+export type SocialRuleCode =
+  | "OG_MISSING_REQUIRED"
+  | "OG_INVALID_DETERMINER"
+  | "OG_INVALID_URL"
+  | "OG_DUPLICATE_SINGLETON"
+  | "OG_NON_STANDARD_TYPE"
+  | "TWITTER_MISSING_REQUIRED"
+  | "TWITTER_INVALID_CARD"
+  | "TWITTER_INVALID_URL"
+  | "TWITTER_DUPLICATE_SINGLETON"
+  | "TWITTER_INVALID_HANDLE"
+  | "TWITTER_INVALID_ID"
+  | "SOCIAL_EMPTY_CONTENT_IGNORED"
+  | "SOCIAL_NON_CANONICAL_ATTRIBUTE"
+  | "SOCIAL_OUTSIDE_HEAD"
+  | "SOCIAL_FALLBACK_USED";
+
+/** Source location for a discovered social meta tag */
+export interface SourceTagLocation {
+  /** Position in traversal order among social meta tags */
+  tagIndex: number;
+
+  /** Source attribute used to discover this value */
+  attrName: "property" | "name";
+
+  /** Raw source attribute value */
+  attrValue: string;
+
+  /** Normalized lowercase source key */
+  normalizedAttrValue: string;
+
+  /** Raw content attribute value */
+  content: string;
+
+  /** Whether the tag is inside <head> */
+  inHead: boolean;
+
+  /** Whether the source attribute is canonical for this namespace */
+  canonicalAttribute: boolean;
+}
+
+/** Successfully validated social field */
+export interface ValidFieldReport {
+  namespace: SocialNamespace;
+  fieldPath: `${SocialNamespace}.${string}`;
+  value: unknown;
+  source: SourceTagLocation;
+  fromFallback: boolean;
+}
+
+/** Invalid social field */
+export interface InvalidFieldReport {
+  namespace: SocialNamespace;
+  fieldPath: `${SocialNamespace}.${string}`;
+  rule: SocialRuleCode;
+  rawValue: string;
+  reason: string;
+  keptInOutput: boolean;
+  source: SourceTagLocation;
+}
+
+/** Missing required social field */
+export interface MissingRequiredFieldReport {
+  namespace: SocialNamespace;
+  fieldPath: `${SocialNamespace}.${string}`;
+  requirementLevel: RequirementLevel;
+  severity: ValidationSeverity;
+  when?: string;
+  expectedTags: string[];
+}
+
+/** Validation warning */
+export interface ValidationWarningReport {
+  namespace: SocialNamespace | "cross";
+  rule: SocialRuleCode;
+  message: string;
+  fieldPath?: `${SocialNamespace}.${string}`;
+  sources?: SourceTagLocation[];
+}
+
+/** Social validation report */
+export interface SocialValidationReport {
+  version: 1;
+  validFields: ValidFieldReport[];
+  invalidFields: InvalidFieldReport[];
+  missingRequiredFields: MissingRequiredFieldReport[];
+  warnings: ValidationWarningReport[];
+  sourceTags: Record<string, SourceTagLocation[]>;
+  summary: {
+    valid: number;
+    invalid: number;
+    missingRequired: number;
+    warnings: number;
+  };
+}
+
+/** Success result containing metadata plus social diagnostics */
+export interface ExtractWithDiagnosticsSuccess {
+  success: true;
+  data: Metadata;
+  diagnostics: SocialValidationReport;
+}
+
+/** Discriminated union for diagnostic extraction operations */
+export type ExtractWithDiagnosticsResult =
+  | ExtractWithDiagnosticsSuccess
+  | ExtractFailure;
+
+// =============================================================================
 // Options
 // =============================================================================
+
+/** Extraction behavior mode */
+export type ExtractionMode = "best-effort" | "platform-valid";
 
 /**
  * Configuration options for metadata extraction
@@ -171,8 +296,18 @@ export interface ExtractOptions {
   /** Base URL for resolving relative URLs when parsing HTML strings */
   baseUrl?: string;
 
-  /** If true, skip fallback parsing (Twitter, basic meta) and only extract OpenGraph */
+  /**
+   * If true, skip fallback parsing for OpenGraph title/description.
+   * This is a legacy fallback control and does not disable parser families.
+   */
   onlyOpenGraph?: boolean;
+
+  /**
+   * Extraction mode:
+   * - best-effort: preserve permissive extraction behavior
+   * - platform-valid: filter OpenGraph/Twitter output to public platform-valid values
+   */
+  mode?: ExtractionMode;
 
   /** Allow fetching from private/internal IP ranges (default: false) */
   allowPrivateUrls?: boolean;
